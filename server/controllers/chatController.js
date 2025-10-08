@@ -1,52 +1,60 @@
 // server/controllers/chatController.js
 
 const { GoogleGenerativeAI } = require("@google/generative-ai");
-const { getOrderStatus, checkPartialShipment, processReturn } = require("../models/Order");
+const { planAndExecuteQuery } = require("../models/Database");
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// REVISED LOGIC: The "recipe book" now includes all needed entities for each intent.
-const intentPlans = {
-    'TRACK_ORDER': { tool: getOrderStatus, requiredEntities: ['orderId'] },
-    'CHECK_PARTIAL_SHIPMENT': { tool: checkPartialShipment, requiredEntities: ['orderId'] },
-    'RETURN_ITEM': { tool: processReturn, requiredEntities: ['orderId', 'reason'] },
-};
+const ALLOWED_INTENTS = [
+    'TRACK_SHIPMENT_DETAILS', 'TRACK_RETURN_PROGRESS', 'TRACK_REFUND_STATUS',
+    'CHECK_PARTIAL_SHIPMENT', 'REPORT_DAMAGED_ITEM', 'REPORT_MISSING_ITEM',
+    'REPORT_WRONG_ITEM_RECEIVED', 'VIEW_TICKET_STATUS', 'CHECK_RETURN_ELIGIBILITY',
+    'CHECK_WARRANTY_STATUS', 'GREETING', 'GRATITUDE', 'UNKNOWN'
+];
 
-const analysisPrompt = (userQuery) => `
-    You are a highly-tuned NLU API. Your sole purpose is to analyze user text and return a single, minified JSON object.
-    YOU MUST RESPOND WITH ONLY the JSON object. Do not add explanations.
+const analysisPrompt = (userQuery, ongoingContext = null) => {
+    let contextInstructions = ongoingContext
+        ? `
+        --- ONGOING CONVERSATION CONTEXT ---
+        The agent is in the middle of a task with the original intent: "${ongoingContext.intent}".
+        The agent previously asked the user for the following missing information: "${ongoingContext.neededEntity}".
+        The user has now replied with: "${userQuery}".
 
-    The JSON object must have four keys: "intent", "entities", "sentiment", and "plan".
-    - "intent": Can be TRACK_ORDER, RETURN_ITEM, CHECK_PARTIAL_SHIPMENT, UNKNOWN.
-    - "entities": An object containing extracted data like orderId or reason.
-    - "sentiment": Can be "frustrated", "neutral", "positive", or "curious".
-    - "plan": A concise, natural language instruction for a support agent on how to frame the final response.
+        YOUR FIRST PRIORITY: Analyze the user's reply.
+        1. If the reply provides the missing information, extract it into the 'entities' object and YOU MUST KEEP the original intent ("${ongoingContext.intent}").
+        2. If the reply is a new, unrelated question, and only in that case, IGNORE the old context and analyze the query from scratch.
+        `
+        : `YOUR TASK: Analyze the user's new query from scratch.`;
 
-    Example 1:
-    Query: "Where is my order #123?"
-    Response: {"intent":"TRACK_ORDER","entities":{"orderId":"123"},"sentiment":"curious","plan":"Provide the user with the current status of their order."}
+    return `
+    You are a highly-tuned NLU API. Your purpose is to classify a user's query and extract data into a specific JSON format.
+    YOU MUST RESPOND WITH ONLY a valid, minified JSON object.
 
-    Example 2:
-    Query: "I'm missing an item from order 555! This is so annoying."
-    Response: {"intent":"CHECK_PARTIAL_SHIPMENT","entities":{"orderId":"555"},"sentiment":"frustrated","plan":"Acknowledge the user's frustration, check for multiple shipments, and explain the status of each."}
+    ${contextInstructions}
 
+    The JSON object must have five keys: "intent", "entities", "sentiment", "plan", and "isTaskOriented".
+
+    --- RULES ---
+    1. The "intent" value MUST be one of the following: [${ALLOWED_INTENTS.join(", ")}].
+    2. If the user's query is about a task not on the allowed list, you MUST classify the intent as "UNKNOWN".
+    3. For an "UNKNOWN" intent, the "plan" MUST be to "Politely inform the user this request is not supported and list 2-3 examples of supported tasks."
+    4. "isTaskOriented" MUST be 'false' for GREETING, GRATITUDE, and UNKNOWN.
+    5. The "entities" value MUST be a simple key-value object (e.g., {"orderId": "123"}).
     ---
+
     Query: "${userQuery}"
     Response:
-`;
+    `;
+};
 
 async function generateResponseFromContext(masterContext) {
     const prompt = `
-        You are an empathetic and helpful e-commerce support agent.
-        Your task is to write a personalized, final response to the user based on the JSON context provided below.
-        Follow the "plan" instruction to shape the tone and content of your reply.
-        If the databaseResult contains an error that indicates missing information, use the 'neededEntities' array to ask the user for the next piece of information naturally.
-
+        You are an empathetic, concise e-commerce support agent. Write a personalized, final response based on the JSON context. Follow the "plan" to shape the tone.
+        If the 'databaseResult' indicates a missing entity ('needed' field), rephrase it as a natural question (e.g., if 'needed' is 'orderId', ask "What is the order number?"). Do not use technical words like 'entity'.
         --- JSON CONTEXT ---
         ${JSON.stringify(masterContext, null, 2)}
         ---
-
-        Write the final response to the user:
+        Write the final, user-facing response:
     `;
     const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
     const result = await model.generateContent(prompt);
@@ -54,86 +62,59 @@ async function generateResponseFromContext(masterContext) {
 }
 
 const handleConnection = (ws) => {
-    ws.context = {}; // Each connection gets its own memory
+    ws.context = {};
 
     ws.on('message', async (message) => {
         try {
             const userQuery = message.toString();
             console.log(`--- New Query: "${userQuery}" ---`);
-            let masterContext;
+            let planObject;
 
-            // --- FULFILLER: Check for an ongoing conversation ---
-            if (ws.context.incompletePlan) {
-                console.log("Fulfilling existing plan...");
-                masterContext = ws.context.incompletePlan;
-                
-                // REVISED LOGIC: Fulfill the next needed entity deterministically.
-                const nextNeeded = masterContext.neededEntities[0];
-                masterContext.entities[nextNeeded] = userQuery;
-                masterContext.neededEntities.shift(); // Remove the entity from the needed list
-            } 
-            // --- PLANNER: If no conversation is active, start a new one ---
-            else {
-                const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-                const result = await model.generateContent(analysisPrompt(userQuery));
-                const cleanedJsonString = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
-                
-                masterContext = JSON.parse(cleanedJsonString);
-                masterContext.originalQuery = userQuery;
+            // STAGE 1: CONTEXT-AWARE ANALYSIS
+            const ongoingContext = ws.context.incompletePlan || null;
+            const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+            const result = await model.generateContent(analysisPrompt(userQuery, ongoingContext));
+            const rawText = result.response.text();
+            const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+            if (!jsonMatch) throw new Error("Analysis LLM did not return valid JSON.");
+            planObject = JSON.parse(jsonMatch[0]);
+            planObject.originalQuery = userQuery;
+            console.log("Stage 1 Complete. Plan Object:", planObject);
 
-                // REVISED LOGIC: Create the list of needed entities right after analysis.
-                const planDetails = intentPlans[masterContext.intent];
-                if (planDetails) {
-                    masterContext.neededEntities = planDetails.requiredEntities.filter(
-                        (entity) => !masterContext.entities[entity]
-                    );
-                } else {
-                    masterContext.neededEntities = [];
-                }
-                console.log("Analysis complete. Needs:", masterContext.neededEntities);
+            // STAGE 2: CONDITIONAL PROCESSING
+            if (planObject.isTaskOriented) {
+                const dbResult = await planAndExecuteQuery(planObject);
+                console.log("Stage 2 Complete. DB Result:", dbResult);
+                planObject.databaseResult = dbResult;
+            } else {
+                console.log("Stage 2 Skipped: Conversational or unapproved query.");
+                planObject.databaseResult = { info: "Conversational turn, no DB action." };
             }
-
-            // --- EXECUTOR & RESPONDER ---
-            let agentResponseText;
-
-            // If there are still entities needed, save the plan and ask the user.
-            if (masterContext.neededEntities && masterContext.neededEntities.length > 0) {
-                console.log("Information still missing, saving plan to context.");
-                ws.context.incompletePlan = masterContext;
-                // Generate a response that asks for the next item.
-                // We pass a placeholder DB result to guide the NLG.
-                masterContext.databaseResult = { error: `Missing ${masterContext.neededEntities[0]}` };
-                agentResponseText = await generateResponseFromContext(masterContext);
-            } 
-            // If all entities are collected, run the tool.
-            else {
-                console.log("Plan is complete. Executing tool...");
-                const toolToExecute = intentPlans[masterContext.intent].tool;
-                const dbResult = await toolToExecute(masterContext.entities);
-                masterContext.databaseResult = dbResult;
-                
-                console.log("Database call complete.", dbResult);
-                
-                // Generate the final response and clear the memory.
-                agentResponseText = await generateResponseFromContext(masterContext);
+            
+            // STAGE 3: GENERATION & STATE MANAGEMENT
+            if (planObject.databaseResult && planObject.databaseResult.error && planObject.databaseResult.needed) {
+                planObject.neededEntity = planObject.databaseResult.needed;
+                ws.context.incompletePlan = planObject;
+            } else {
                 ws.context = {};
             }
-
-            console.log("Final response generated.");
+            
+            console.log("Stage 3: Generating final response...");
+            const agentResponseText = await generateResponseFromContext(planObject);
+            console.log("Final Response:", agentResponseText);
+            
             const botReply = { id: Date.now(), text: agentResponseText, sender: 'bot' };
             ws.send(JSON.stringify(botReply));
 
         } catch (error) {
             console.error("Error in workflow:", error);
             ws.context = {};
-            const errorReply = { id: Date.now(), text: "I'm sorry, I encountered a system error. Could you please try again?", sender: 'bot' };
+            const errorReply = { id: Date.now(), text: "I'm sorry, an unexpected error occurred. Let's start over.", sender: 'bot' };
             ws.send(JSON.stringify(errorReply));
         }
     });
 
-    ws.on('close', () => {
-        console.log("Connection handled by controller is now closed.");
-    });
+    ws.on('close', () => { console.log("Connection handled by controller is now closed."); });
 };
 
 module.exports = { handleConnection };
