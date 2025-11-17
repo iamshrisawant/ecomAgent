@@ -1,5 +1,3 @@
-Here is a step-by-step guide for setting up and running the `ecomAgent` project.
-
 # ecomAgent Setup Guide
 
 This guide provides the full step-by-step procedure to install, configure, and run the `ecomAgent` full-stack application.
