@@ -1,0 +1,20 @@
+/* client/src/pages/Dashboard.css */
+.dashboard-container { padding: 20px; max-width: 900px; margin: auto; }
+.dashboard-tabs { border-bottom: 2px solid #ccc; margin-bottom: 20px; }
+.dashboard-tabs button {
+    padding: 10px 20px;
+    border: none;
+    background: #f0f0f0;
+    cursor: pointer;
+    font-size: 16px;
+    border-bottom: 2px solid transparent;
+}
+.dashboard-tabs button.active { border-bottom: 2px solid #007bff; font-weight: bold; }
+.dashboard-content { padding: 10px; }
+
+/* Styles for TicketsTab component */
+.ticket-list { display: flex; flex-direction: column; gap: 15px; }
+.ticket-card { border: 1px solid #ddd; border-radius: 8px; padding: 15px; background: #fafafa; }
+.ticket-card h3 { margin-top: 0; }
+.ticket-card .status-open { color: #dc3545; font-weight: bold; }
+.ticket-card .status-resolved { color: #28a745; font-weight: bold; }

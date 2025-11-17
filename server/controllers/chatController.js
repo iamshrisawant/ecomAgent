@@ -2,16 +2,52 @@
 
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { planAndExecuteQuery } = require("../models/Database");
+const { driver } = require("../config/db");
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// The "White List" of explicitly approved, safe intents.
-const ALLOWED_INTENTS = [
-    'TRACK_SHIPMENT_DETAILS', 'TRACK_RETURN_PROGRESS', 'TRACK_REFUND_STATUS',
-    'CHECK_PARTIAL_SHIPMENT', 'REPORT_DAMAGED_ITEM', 'REPORT_MISSING_ITEM',
-    'REPORT_WRONG_ITEM_RECEIVED', 'VIEW_TICKET_STATUS', 'CHECK_RETURN_ELIGIBILITY',
-    'CHECK_WARRANTY_STATUS', 'GREETING', 'GRATITUDE', 'UNKNOWN'
-];
+// --- UPDATED (Smart Classifier) ---
+// This will store our rich intent data, e.g.,
+// "TRACK_SHIPMENT_DETAILS (requires: orderId)"
+let ALLOWED_INTENTS_WITH_RULES = "No intents loaded.";
+// --- END UPDATED ---
+
+// Function to load intents AND THEIR RULES from Neo4j
+const loadIntents = async function() {
+    console.log("Loading AI intents and rules from database...");
+    const session = driver.session({ database: 'neo4j' });
+    try {
+        // This query fetches each intent and a list of its required entities
+        const result = await session.run(`
+            MATCH (i:Intent)
+            OPTIONAL MATCH (i)-[:REQUIRES_ENTITY]->(e:Entity)
+            RETURN i.name AS intent, collect(e.name) AS requiredEntities
+        `);
+        
+        const intents = result.records.map(record => {
+            const intent = record.get('intent');
+            const entities = record.get('requiredEntities').filter(e => e); // Filter out nulls
+            
+            if (entities.length > 0) {
+                return `${intent} (requires: ${entities.join(', ')})`;
+            }
+            return intent;
+        });
+
+        // This string will be injected directly into the prompt
+        ALLOWED_INTENTS_WITH_RULES = intents.join(", ");
+        console.log("Intents and rules loaded:", ALLOWED_INTENTS_WITH_RULES);
+
+    } catch (error) {
+        console.error("Failed to load intents from database:", error);
+        ALLOWED_INTENTS_WITH_RULES = "GREETING, GRATITUDE, UNKNOWN";
+    } finally {
+        await session.close();
+    }
+}
+// Load intents on server startup
+loadIntents();
+
 
 const analysisPrompt = (userQuery, ongoingContext = null) => {
     // Shared rules for both prompt types to ensure consistency
@@ -19,11 +55,12 @@ const analysisPrompt = (userQuery, ongoingContext = null) => {
     The JSON object you return MUST have five keys: "intent", "entities", "sentiment", "plan", and "isTaskOriented".
 
     --- RULES ---
-    1. The "intent" value MUST be one of the following strings: [${ALLOWED_INTENTS.join(", ")}].
-    2. If a user's query does not match an allowed intent, you MUST classify the intent as "UNKNOWN".
-    3. For an "UNKNOWN" intent, the "plan" MUST be to "Politely inform the user this request is not supported and list 2-3 examples of supported tasks."
-    4. The "entities" value MUST be a simple key-value object (e.g., {"orderId": "123"}). It MUST NOT be an array.
-    5. "isTaskOriented" MUST be 'false' for intents like GREETING, GRATITUDE, and UNKNOWN.
+    1. The "intent" value MUST be one of the following strings. 
+       **You MUST use the entity requirements to make a more accurate choice.**
+       [${ALLOWED_INTENTS_WITH_RULES}]
+    2. If a user's query provides entities (like a 'ticketId') that DO NOT match any of the listed intent requirements (e.g., 'TRACK_SHIPMENT_DETAILS' requires 'orderId'), you MUST classify the intent as "UNKNOWN".
+    3. For an "UNKNOWN" intent, the "plan" MUST be "I will escalate this to a human agent who can better assist with this request."
+    4. "isTaskOriented" MUST be 'false' for GREETING, GRATITUDE, and UNKNOWN.
     ---
     `;
 
@@ -61,13 +98,17 @@ const analysisPrompt = (userQuery, ongoingContext = null) => {
         
         ${baseRules}
 
-        Example (Task):
+        Example (Good Match):
         Query: "I'm missing an item from order 555! This is so annoying."
         Response: {"intent":"CHECK_PARTIAL_SHIPMENT","entities":{"orderId":"555"},"sentiment":"frustrated","plan":"Acknowledge the user's frustration, check for multiple shipments, and explain the status of each.","isTaskOriented":true}
 
-        Example (Invalid Intent):
-        Query: "Can you change the price of a product for me?"
-        Response: {"intent":"UNKNOWN","entities":{},"sentiment":"neutral","plan":"Politely inform the user this request is not supported and list 2-3 examples of supported tasks.","isTaskOriented":false}
+        Example (Good Match with Multiple Entities):
+        Query: "My order ORD-101 arrived damaged, the screen is cracked."
+        Response: {"intent":"REPORT_DAMAGED_ITEM","entities":{"orderId":"ORD-101", "description":"the screen is cracked"},"sentiment":"negative","plan":"Create a ticket for the damaged item.","isTaskOriented":true}
+
+        Example (Bad Match / UNKNOWN):
+        Query: "Can you track the status of my ticket 12345?"
+        Response: {"intent":"UNKNOWN","entities":{"ticketId":"12345"},"sentiment":"neutral","plan":"I will escalate this to a human agent who can better assist with this request.","isTaskOriented":false}
         
         ---
         Query: "${userQuery}"
@@ -117,9 +158,21 @@ const handleConnection = (ws, customerId) => {
             planObject.originalQuery = userQuery;
             console.log("Stage 1 Complete. Plan Object:", planObject);
 
-            if (planObject.intent === 'UNKNOWN' && planObject.originalQuery.length > 10) { // Only log substantive queries
-                await logSuggestion(planObject.originalQuery, planObject.plan, customerId);
+            // --- UPDATED (Grounded Learning Loop) ---
+            if (planObject.intent === 'UNKNOWN' && planObject.originalQuery.length > 10) {
+                // Create an ESCALATION ticket immediately
+                const escalationPlan = {
+                    intent: "CREATE_ESCALATION", // Internal intent for Database.js
+                    entities: {
+                        orderId: planObject.entities.orderId || 'Unknown', // Try to get orderId
+                        type: "ESCALATION",
+                        description: `User query: "${planObject.originalQuery}"`
+                    }
+                };
+                // We re-use the planner to create the ticket
+                await planAndExecuteQuery(escalationPlan, ws.context);
             }
+            // --- END UPDATED ---
 
             // --- STAGE 2: CONDITIONAL PROCESSING ---
             if (planObject.isTaskOriented) {
@@ -136,6 +189,7 @@ const handleConnection = (ws, customerId) => {
                 planObject.neededEntity = planObject.databaseResult.needed;
                 ws.context.incompletePlan = planObject; // Save state
             } else {
+                // --- FIX: This was ws.content, now ws.context ---
                 ws.context.incompletePlan = null; // Clear state
             }
             
@@ -155,4 +209,8 @@ const handleConnection = (ws, customerId) => {
     ws.on('close', () => { console.log("Connection handled by controller is now closed."); });
 };
 
-module.exports = { handleConnection };
+// Export both functions correctly
+module.exports = {
+    loadIntents,
+    handleConnection
+};

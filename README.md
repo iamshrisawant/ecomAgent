@@ -100,3 +100,4 @@ CREATE (s:Shipment {shipmentID: 'SHIP-1010', carrier: 'FedEx', trackingNumber: '
 CREATE (c)-[:PLACED]->(o)
 CREATE (o)-[:CONTAINS]->(p)
 CREATE (p)-[:HAS_POLICY]->(policy);
+

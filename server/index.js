@@ -19,6 +19,7 @@ app.use(express.json());
 
 // API Route for handling logins
 app.use('/api/auth', require('./routes/authRoutes'));
+app.use('/api/dashboard', require('./routes/dashboardRoutes'));
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
@@ -34,8 +35,12 @@ wss.on('connection', (ws, req) => {
             return ws.close(1008, 'Authentication token not provided.');
         }
 
-        // Verify the token's authenticity
-        const decoded = jwt.verify(token, 'yourSecretKey');
+        // --- START FIX ---
+        // Verify the token's authenticity using the environment variable
+        // OLD: const decoded = jwt.verify(token, 'yourSecretKey');
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        // --- END FIX ---
+
         const customerId = decoded.user.id;
         
         console.log(`WebSocket connection authenticated for customer: ${customerId}`);
