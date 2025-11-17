@@ -2,23 +2,25 @@ import React, { useState, useEffect, useRef } from 'react';
 import '../styles/ChatWindow.css';
 import socketService from '../services/socketService';
 
-function ChatWindow({ isOpen, onClose, token }) { // Added token to props
+function ChatWindow({ isOpen, onClose, token }) {
     const [messages, setMessages] = useState([]);
     const [newMessage, setNewMessage] = useState('');
     const chatBodyRef = useRef(null);
 
     useEffect(() => {
-        if (isOpen && token) { // Check for token before connecting
+        if (isOpen && token) {
+            setMessages([]);
             const handleNewMessage = (message) => {
                 setMessages(prevMessages => [...prevMessages, message]);
             };
-            socketService.connect(handleNewMessage, token); // Pass token
+            socketService.connect(handleNewMessage, token);
         }
         return () => {
-            socketService.disconnect();
-            setMessages([]);
+            if (isOpen) {
+                socketService.disconnect();
+            }
         };
-    }, [isOpen, token]); // Add token to dependency array
+    }, [isOpen, token]);
 
     useEffect(() => {
         if (chatBodyRef.current) {
@@ -38,29 +40,41 @@ function ChatWindow({ isOpen, onClose, token }) { // Added token to props
     if (!isOpen) return null;
 
     return (
-        <div className="chat-overlay" onClick={onClose}>
-            <div className="chat-window" onClick={(e) => e.stopPropagation()}>
-                <div className="chat-header">
-                    <h2>Support Chat</h2>
-                    <button className="close-btn" onClick={onClose}>×</button>
+        <div className="chat-window" onClick={(e) => e.stopPropagation()}>
+            <div className="chat-header">
+                {/* New Avatar and Status */}
+                <div className="chat-header-info">
+                    <div className="chat-avatar">
+                        <div className="chat-status-dot"></div>
+                    </div>
+                    <div>
+                        <h2>Support Chat</h2>
+                        <p className="chat-status-text">We're online</p>
+                    </div>
                 </div>
-                <div className="chat-body" ref={chatBodyRef}>
-                    {messages.map((message) => (
-                        <div key={message.id} className={`message ${message.sender}`}>
+                <button className="close-btn" onClick={onClose}>×</button>
+            </div>
+
+            <div className="chat-body" ref={chatBodyRef}>
+                {messages.map((message) => (
+                    <div key={message.id} className={`message-wrapper ${message.sender}`}>
+                        <div className={`message ${message.sender}`}>
                             <p>{message.text}</p>
                         </div>
-                    ))}
-                </div>
-                <form className="chat-footer" onSubmit={handleSendMessage}>
-                    <input
-                        type="text"
-                        value={newMessage}
-                        onChange={(e) => setNewMessage(e.target.value)}
-                        placeholder="Type your message..."
-                    />
-                    <button type="submit">Send</button>
-                </form>
+                    </div>
+                ))}
             </div>
+
+            <form className="chat-footer" onSubmit={handleSendMessage}>
+                <input
+                    type="text"
+                    value={newMessage}
+                    onChange={(e) => setNewMessage(e.target.value)}
+                    placeholder="Type your message..."
+                />
+                {/* Changed button to an icon */}
+                <button type="submit" className="send-btn" title="Send">➤</button>
+            </form>
         </div>
     );
 }

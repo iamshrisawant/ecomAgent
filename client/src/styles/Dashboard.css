@@ -1,20 +1,149 @@
-/* client/src/pages/Dashboard.css */
-.dashboard-container { padding: 20px; max-width: 900px; margin: auto; }
-.dashboard-tabs { border-bottom: 2px solid #ccc; margin-bottom: 20px; }
-.dashboard-tabs button {
-    padding: 10px 20px;
-    border: none;
-    background: #f0f0f0;
-    cursor: pointer;
-    font-size: 16px;
-    border-bottom: 2px solid transparent;
+/* New Dashboard Layout */
+.dashboard-layout {
+  display: flex;
+  min-height: 100vh;
+  width: 100%;
+  background-color: var(--light-background, #f8f9fa);
 }
-.dashboard-tabs button.active { border-bottom: 2px solid #007bff; font-weight: bold; }
-.dashboard-content { padding: 10px; }
 
-/* Styles for TicketsTab component */
-.ticket-list { display: flex; flex-direction: column; gap: 15px; }
-.ticket-card { border: 1px solid #ddd; border-radius: 8px; padding: 15px; background: #fafafa; }
-.ticket-card h3 { margin-top: 0; }
-.ticket-card .status-open { color: #dc3545; font-weight: bold; }
-.ticket-card .status-resolved { color: #28a745; font-weight: bold; }
+.dashboard-sidebar {
+  width: 260px;
+  flex-shrink: 0;
+  background: var(--background-color, #ffffff);
+  border-right: 1px solid #e0e0e0;
+  padding: 20px;
+  height: 100vh;
+  position: fixed;
+  top: 0;
+  left: 0;
+  /* New styles to space out nav and logout */
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.dashboard-nav-top h2 {
+  color: var(--primary-color, #007bff);
+  text-align: center;
+  margin-top: 0;
+  margin-bottom: 30px;
+  font-size: 24px;
+}
+
+.dashboard-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dashboard-nav button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 15px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 500;
+  border-radius: var(--border-radius, 8px);
+  text-align: left;
+  color: #333;
+}
+
+.dashboard-nav button:hover {
+  background: #e9ecef;
+}
+
+.dashboard-nav button.active {
+  background: var(--primary-color, #007bff);
+  color: white;
+  font-weight: bold;
+}
+
+.dashboard-main-content {
+  flex-grow: 1;
+  padding: 30px;
+  background: var(--light-background, #f8f9fa);
+  height: 100vh;
+  overflow-y: auto;
+  margin-left: 260px; /* Offset for the fixed sidebar */
+}
+
+/* New Logout Button Style */
+.logout-button {
+  display: block;
+  width: 100%;
+  padding: 12px 15px;
+  border: none;
+  background: #f1f3f5;
+  color: #555;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 600;
+  border-radius: var(--border-radius, 8px);
+  text-align: center;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+.logout-button:hover {
+  background-color: #e63946;
+  color: white;
+}
+
+/* Updated Ticket List/Card Styles */
+.ticket-list { 
+  display: flex; 
+  flex-direction: column; 
+  gap: 20px; 
+}
+
+.ticket-card { 
+  border: 1px solid #e0e0e0; 
+  border-radius: var(--border-radius, 8px); 
+  padding: 20px; 
+  background: var(--background-color, #fff); 
+  box-shadow: var(--shadow-sm, 0 2px 8px rgba(0,0,0,0.05));
+  transition: box-shadow 0.2s ease-in-out;
+}
+
+.ticket-card:hover {
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+}
+
+.ticket-card h3 { 
+  margin-top: 0; 
+  font-size: 1.2rem;
+}
+
+.ticket-card p {
+  margin: 8px 0;
+  color: #555;
+  line-height: 1.5;
+}
+
+.ticket-card p strong {
+  color: #111;
+}
+
+/* Status "Pills" */
+.status-open, .status-resolved, .status-closed {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 16px;
+  font-weight: bold;
+  font-size: 13px;
+  text-transform: capitalize;
+}
+
+.status-open { 
+  color: #c62828; 
+  background: #ffebee;
+  border: 1px solid #ffcdd2;
+}
+
+.status-resolved, .status-closed { 
+  color: #2e7d32; 
+  background: #e8f5e9;
+  border: 1px solid #c8e6c9;
+}

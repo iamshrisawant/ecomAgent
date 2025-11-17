@@ -1,47 +1,87 @@
-/* The main overlay container */
-.chat-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background-color: rgba(0, 0, 0, 0.3); /* Semi-transparent background */
-  backdrop-filter: blur(5px); /* This is the magic for the blur effect! */
-  -webkit-backdrop-filter: blur(5px); /* For Safari support */
-  z-index: 1000; /* Ensures it's on top of everything */
-  display: flex;
-  justify-content: center;
-  align-items: center;
+/* Animation for the window popping up */
+@keyframes pop-up {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 
 /* The actual chat window */
 .chat-window {
-  width: 90%;
-  max-width: 400px;
+  position: fixed;
+  bottom: 100px;
+  right: 30px;
+  width: 370px;
+  max-width: 90vw;
   height: 60vh;
-  max-height: 600px;
-  background-color: #ffffff;
-  border-radius: 12px;
-  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.2);
+  max-height: 500px;
+  z-index: 1100;
+  
+  background-color: var(--background-color, #ffffff);
+  border-radius: var(--border-radius, 12px);
+  box-shadow: 0 5px 25px rgba(0, 0, 0, 0.15);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  font-family: Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  
+  animation: pop-up 0.3s ease-out;
 }
 
-/* Chat Header */
+/* --- NEW CHAT HEADER STYLES --- */
 .chat-header {
-  background-color: #007bff;
+  background-color: var(--primary-color, #007bff);
   color: white;
-  padding: 10px 15px;
+  padding: 12px 20px;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-shrink: 0;
+}
+
+.chat-header-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.chat-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #f1f0f0;
+  position: relative;
+  /* You could add a support icon SVG here */
+  border: 2px solid rgba(255,255,255,0.5);
+}
+
+.chat-status-dot {
+  width: 10px;
+  height: 10px;
+  background: #28a745;
+  border: 2px solid var(--primary-color, #007bff);
+  border-radius: 50%;
+  position: absolute;
+  bottom: 0;
+  right: 0;
 }
 
 .chat-header h2 {
   margin: 0;
-  font-size: 1.1rem;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.chat-status-text {
+  font-size: 0.8rem;
+  margin: 0;
+  opacity: 0.8;
 }
 
 .close-btn {
@@ -57,21 +97,29 @@
   opacity: 1;
 }
 
-/* Chat Body (where messages appear) */
+/* --- NEW CHAT BODY & MESSAGE BUBBLES --- */
 .chat-body {
   flex-grow: 1;
-  padding: 15px;
+  padding: 20px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 4px;
+  background-color: var(--light-background, #f8f9fa);
+}
+
+.message-wrapper {
+  display: flex;
+  flex-direction: column;
 }
 
 .message {
-  padding: 8px 12px;
-  border-radius: 18px;
-  max-width: 75%;
+  padding: 10px 14px;
+  border-radius: 18px; /* Fully rounded */
+  max-width: 80%;
   word-wrap: break-word;
+  line-height: 1.4;
+  font-size: 15px;
 }
 
 .message p {
@@ -79,49 +127,68 @@
 }
 
 /* Bot messages styling */
+.message-wrapper.bot {
+  align-items: flex-start;
+}
 .message.bot {
-  background-color: #f1f0f0;
-  color: #333;
-  align-self: flex-start;
-  border-bottom-left-radius: 4px;
+  background-color: var(--background-color, #ffffff);
+  color: var(--text-color, #333);
+  border: 1px solid #e0e0e0;
+  /* "Tail" effect */
+  border-bottom-left-radius: 4px; 
 }
 
 /* User messages styling */
+.message-wrapper.user {
+  align-items: flex-end;
+}
 .message.user {
-  background-color: #007bff;
+  background-color: var(--primary-color, #007bff);
   color: white;
-  align-self: flex-end;
+  /* "Tail" effect */
   border-bottom-right-radius: 4px;
 }
 
-/* Chat Footer (input area) */
+/* --- NEW CHAT FOOTER & INPUT --- */
 .chat-footer {
   display: flex;
-  padding: 10px;
-  border-top: 1px solid #eee;
-  background-color: #f9f9f9;
+  align-items: center;
+  padding: 12px;
+  border-top: 1px solid #e0e0e0;
+  background-color: var(--background-color, #f9f9f9);
+  flex-shrink: 0;
 }
 
 .chat-footer input {
   flex-grow: 1;
-  border: 1px solid #ddd;
+  border: none;
+  background: var(--light-background, #f8f9fa);
+  border: 1px solid #e0e0e0;
   border-radius: 20px;
-  padding: 10px 15px;
+  padding: 12px 18px;
   font-size: 1rem;
   outline: none;
 }
+.chat-footer input:focus {
+  border-color: var(--primary-color, #007bff);
+  box-shadow: 0 0 0 2px rgba(0,123,255,0.2);
+}
 
-.chat-footer button {
-  background-color: #007bff;
+.send-btn {
+  background-color: var(--primary-color, #007bff);
   color: white;
   border: none;
-  border-radius: 20px;
-  padding: 10px 20px;
+  border-radius: 50%;
+  width: 44px;
+  height: 44px;
   margin-left: 10px;
   cursor: pointer;
-  font-size: 1rem;
+  font-size: 1.2rem;
   font-weight: bold;
+  transition: background-color 0.2s;
+  padding: 0;
+  padding-left: 3px; /* Optical centering for the arrow */
 }
-.chat-footer button:hover {
-  background-color: #0056b3;
+.send-btn:hover {
+  background-color: var(--primary-color-hover, #0056b3);
 }

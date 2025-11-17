@@ -1,124 +1,57 @@
 // client/src/App.js
 import React, { useState, useEffect } from 'react';
-import { Routes, Route, Link, useNavigate } from 'react-router-dom';
+import { Routes, Route, Link, useNavigate, Navigate, Outlet } from 'react-router-dom';
 import axios from 'axios';
 import ChatWindow from './components/ChatWindow';
 import Dashboard from './pages/Dashboard';
+import LoginPage from './pages/LoginPage';
 import './App.css';
-import setAuthToken from './services/setAuthToken'; // <-- IMPORT THE UTILITY
+import setAuthToken from './services/setAuthToken';
 
+// This component is the "customer" storefront.
+// It's a "dumb" component that assumes you are a logged-in customer.
 function HomePage() {
     const [isChatOpen, setIsChatOpen] = useState(false);
-    const [email, setEmail] = useState('agent101@example.com');
-    const [password, setPassword] = useState('password123');
-    const [error, setError] = useState('');
-    
-    // --- START FIX: Auth State from localStorage ---
-    // This state is now powered by localStorage to persist logins
-    const [authToken, setAuthToken_local] = useState(localStorage.getItem('token'));
-    const [userRole, setUserRole] = useState(localStorage.getItem('role'));
-    const [customerId, setCustomerId] = useState(localStorage.getItem('customerId'));
-    // --- END FIX ---
-    
-    const navigate = useNavigate();
-
-    // On component mount, set the auth token in axios if it exists
-    useEffect(() => {
-        if (authToken) {
-            setAuthToken(authToken);
-        }
-    }, [authToken]); // Run when authToken changes
-
-    const handleLogin = async (e) => {
-        e.preventDefault();
-        setError('');
-        try {
-            const res = await axios.post('/api/auth/login', { email, password });
-            const { token, customerId, role } = res.data; // Get all data
-
-            // 1. Save all data to localStorage
-            localStorage.setItem('token', token);
-            localStorage.setItem('role', role);
-            localStorage.setItem('customerId', customerId);
-
-            // 2. Set the token in axios headers
-            setAuthToken(token);
-
-            // 3. Set local React state to re-render the page
-            setAuthToken_local(token);
-            setUserRole(role);
-            setCustomerId(customerId);
-
-            // 4. Redirect if agent
-            if (role === 'AGENT') {
-                navigate('/dashboard');
-            }
-            
-        } catch (err) {
-            setError('Login failed. Please check your credentials.');
-            // Clear all old data on failure
-            localStorage.removeItem('token');
-            localStorage.removeItem('role');
-            localStorage.removeItem('customerId');
-            setAuthToken(null);
-            setAuthToken_local(null);
-            setUserRole(null);
-            setCustomerId(null);
-        }
-    };
-
-    const handleLogout = () => {
-        // Clear all session data
-        localStorage.removeItem('token');
-        localStorage.removeItem('role');
-        localStorage.removeItem('customerId');
-        setAuthToken(null);
-        setAuthToken_local(null);
-        setUserRole(null);
-        setCustomerId(null);
-        navigate('/'); // Go back to login
-    };
+    const authToken = localStorage.getItem('token');
+    const customerId = localStorage.getItem('customerId');
 
     return (
         <div className="App">
             <header className="App-header">
-                {!authToken ? (
-                    <form onSubmit={handleLogin} style={{ textAlign: 'center' }}>
-                        <h2>Login</h2>
-                        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" style={{ padding: '8px', margin: '5px' }}/>
-                        <br />
-                        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" style={{ padding: '8px', margin: '5px' }}/>
-                        <br />
-                        <button type="submit" style={{ padding: '10px 20px', marginTop: '10px' }}>Login</button>
-                        {error && <p style={{ color: 'red', fontSize: '14px' }}>{error}</p>}
-                    </form>
-                ) : (
-                    <div>
-                        {/* Welcome message now respects the role */}
-                        <p>Welcome, {userRole === 'AGENT' ? 'Agent' : `Customer ${customerId}`}!</p>
-                        
-                        {/* --- START FIX: Conditional Rendering --- */}
-                        {/* Only show Chat button for CUSTOMER */}
-                        {userRole === 'CUSTOMER' && (
-                            <button onClick={() => setIsChatOpen(true)} style={{ padding: '10px 20px', fontSize: '16px', margin: '5px' }}>
-                                Open Chat 💬
-                            </button>
-                        )}
-                        
-                        {/* Only show Dashboard link for AGENT */}
-                        {userRole === 'AGENT' && (
-                            <div style={{ marginTop: '20px' }}>
-                                <Link to="/dashboard" style={{ color: '#61dafb' }}>Go to Agent Dashboard 🕵️</Link>
-                            </div>
-                        )}
-                        {/* --- END FIX --- */}
-                        
-                        <button onClick={handleLogout} style={{ padding: '10px 20px', fontSize: '16px', margin: '5px', background: '#dc3545' }}>
-                            Logout
-                        </button>
-                    </div>
-                )}
+                <h1 style={{ fontSize: '24px', color: 'var(--primary-color)', margin: 0 }}>
+                    ecomagent
+                </h1>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                    <span>Welcome, Customer {customerId}!</span>
+                    <Link to="/logout" style={{ 
+                        padding: '8px 12px', 
+                        background: '#dc3545', 
+                        color: 'white', 
+                        border: 'none', 
+                        borderRadius: '4px', 
+                        cursor: 'pointer',
+                        textDecoration: 'none'
+                    }}>
+                        Logout
+                    </Link>
+                </div>
             </header>
+
+            <main className="homepage-container">
+                <div style={{ padding: '40px 0', textAlign: 'center' }}>
+                    <h2>Your E-Commerce Storefront</h2>
+                    <p>This is the main customer-facing page.</p>
+                </div>
+            </main>
+
+            <button 
+                onClick={() => setIsChatOpen(true)} 
+                className="chat-fab"
+                title="Open Support Chat"
+            >
+                💬
+            </button>
+
             <ChatWindow
                 isOpen={isChatOpen}
                 onClose={() => setIsChatOpen(false)}
@@ -129,12 +62,71 @@ function HomePage() {
 }
 
 
+// This component "gates" our protected content
+const ProtectedRoute = () => {
+    const token = localStorage.getItem('token');
+    
+    // Set auth token on every load
+    useEffect(() => {
+        if (token) {
+            setAuthToken(token);
+        }
+    }, [token]);
+
+    if (!token) {
+        // If no token, redirect to login
+        return <Navigate to="/login" replace />;
+    }
+
+    // If token exists, render the child routes (e.g., HomePage or Dashboard)
+    return <Outlet />;
+};
+
+// This component handles the redirection logic
+const RoleBasedRedirect = () => {
+    const role = localStorage.getItem('role');
+
+    if (role === 'AGENT') {
+        return <Navigate to="/dashboard" replace />;
+    }
+    
+    // Default to customer homepage
+    return <Navigate to="/home" replace />;
+};
+
+// This component handles logging out
+const Logout = () => {
+    const navigate = useNavigate();
+    useEffect(() => {
+        localStorage.removeItem('token');
+        localStorage.removeItem('role');
+        localStorage.removeItem('customerId');
+        setAuthToken(null);
+        navigate('/login', { replace: true });
+    }, [navigate]);
+
+    return null; // This component just redirects
+};
+
+
 // The main App component now just handles routing
 function App() {
     return (
         <Routes>
-            <Route path="/" element={<HomePage />} />
-            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/logout" element={<Logout />} />
+
+            {/* All private routes are children of ProtectedRoute */}
+            <Route element={<ProtectedRoute />}>
+                <Route path="/home" element={<HomePage />} />
+                <Route path="/dashboard" element={<Dashboard />} />
+                
+                {/* Root path '/' redirects based on role */}
+                <Route path="/" element={<RoleBasedRedirect />} />
+            </Route>
+
+            {/* Catch-all for any other route, redirect to login */}
+            <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
     );
 }
