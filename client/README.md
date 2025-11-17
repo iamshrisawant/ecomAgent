@@ -112,7 +112,7 @@ This application uses `bcrypt` to hash passwords. You must create users with has
     # Output will be something like: $2a$10$... (this is your AGENT_HASH)
     ```
 
-2.  **Populate Neo4j Database for Demo:**
+2.  **Populate Neo4j Database:**
     Open your Neo4j instance (AuraDB Query console or Neo4j Desktop Browser).
 
       * First, run this command to clear any existing data (optional):
@@ -144,6 +144,37 @@ This application uses `bcrypt` to hash passwords. You must create users with has
     // --- Create Policies ---
     CREATE (:Policy {policyID: 'RET-30D', type: 'RETURN', durationDays: 30});
     CREATE (:Policy {policyID: 'WAR-1Y', type: 'WARRANTY', durationDays: 365});
+
+    // --- Create a Simple, Completed Order (ORD-101) ---
+    MATCH (c:Customer {customerID: 'cust101'}), (p:Product {productID: 'KB-100'})
+    CREATE (o:Order {orderId: 'ORD-101', datePlaced: datetime('2025-08-15T10:00:00.000Z'), status: 'Completed'})
+    CREATE (s:Shipment {shipmentID: 'SHIP-101', carrier: 'FedEx', trackingNumber: 'FX12345', status: 'Delivered'})
+    CREATE (c)-[:PLACED]->(o)
+    CREATE (o)-[:CONTAINS]->(p)
+    CREATE (o)-[:FULFILLED_BY]->(s);
+
+    // --- Create a Complex, Partial Shipment Order (ORD-500) ---
+    MATCH (c:Customer {customerID: 'cust101'})
+    MATCH (p1:Product {productID: 'M-250'})
+    MATCH (p2:Product {productID: 'HP-50'})
+    CREATE (o:Order {orderId: 'ORD-500', datePlaced: datetime('2025-09-28T14:30:00.000Z'), status: 'Partially Shipped'})
+    CREATE (s1:Shipment {shipmentID: 'SHIP-500A', carrier: 'UPS', trackingNumber: 'UPS67890', status: 'Delivered'})
+    CREATE (s2:Shipment {shipmentID: 'SHIP-500B', carrier: 'UPS', trackingNumber: 'UPS11223', status: 'In Transit'})
+    CREATE (c)-[:PLACED]->(o)
+    CREATE (o)-[:CONTAINS]->(p1)
+    CREATE (o)-[:CONTAINS]->(p2)
+    CREATE (o)-[:FULFILLED_BY]->(s1)
+    CREATE (o)-[:FULFILLED_BY]->(s2);
+
+    // --- Create a Recent Order for Return/Damage Testing (ORD-1010) ---
+    MATCH (c:Customer {customerID: 'cust101'}), (p:Product {productID: 'KB-100'})
+    MATCH (policy:Policy {policyID: 'RET-30D'})
+    CREATE (o:Order {orderId: 'ORD-1010', datePlaced: datetime(), status: 'Delivered'})
+    CREATE (s:Shipment {shipmentID: 'SHIP-1010', carrier: 'FedEx', trackingNumber: 'FX54321', status: 'Delivered'})
+    CREATE (c)-[:PLACED]->(o)
+    CREATE (o)-[:CONTAINS]->(p)
+    CREATE (p)-[:HAS_POLICY]->(policy);
+    ```
 
 -----
 
