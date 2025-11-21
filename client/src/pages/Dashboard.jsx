@@ -1,9 +1,10 @@
 // client/src/pages/Dashboard.jsx
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom'; // <-- Import Link
+import { Link } from 'react-router-dom'; 
 import TicketsTab from '../components/dashboard/TicketsTab';
 import EscalationsTab from '../components/dashboard/EscalationsTab';
 import SuggestionsTab from '../components/dashboard/SuggestionsTab';
+import ActiveIntentsTab from '../components/dashboard/ActiveIntentsTab'; // [NEW IMPORT]
 import ChatWindow from '../components/ChatWindow';
 import '../styles/Dashboard.css';
 
@@ -20,6 +21,8 @@ function Dashboard() {
                 return <EscalationsTab />;
             case 'suggestions':
                 return <SuggestionsTab />;
+            case 'active': // [NEW CASE]
+                return <ActiveIntentsTab />;
             default:
                 return <TicketsTab />;
         }
@@ -52,10 +55,16 @@ function Dashboard() {
                         >
                             🧠 AI Suggestions
                         </button>
+                        {/* [NEW BUTTON] */}
+                        <button 
+                            className={activeTab === 'active' ? 'active' : ''} 
+                            onClick={() => setActiveTab('active')}
+                        >
+                            📚 Active Knowledge
+                        </button>
                     </nav>
                 </div>
                 
-                {/* Use Link component for navigation to /logout */}
                 <Link to="/logout" className="logout-button">
                     Logout
                 </Link>

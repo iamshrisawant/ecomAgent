@@ -5,6 +5,7 @@ import axios from 'axios';
 import ChatWindow from './components/ChatWindow';
 import Dashboard from './pages/Dashboard';
 import LoginPage from './pages/LoginPage';
+import SignUpPage from './pages/SignUpPage';
 import './App.css';
 import setAuthToken from './services/setAuthToken';
 
@@ -115,6 +116,7 @@ function App() {
         <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route path="/logout" element={<Logout />} />
+            <Route path="/signup" element={<SignUpPage />} />
 
             {/* All private routes are children of ProtectedRoute */}
             <Route element={<ProtectedRoute />}>

@@ -2,230 +2,225 @@
 const { driver } = require('../config/db');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const { generateID } = require('../config/idHelper');
 
-// Placeholder for a function that would dynamically load the schema on startup
-async function getDynamicGraphSchema() {
-    return `
-      This is the schema for an e-commerce post-purchase support graph database.
-      ## Node Labels & properties: Customer(customerID, name), Order(orderId, datePlaced, status), Product(productID, name), Shipment(shipmentID, status), Ticket(ticketId, type, status), Return(returnId, reason, status).
-      ## Relationships: (Customer)-[:PLACED]->(Order), (Order)-[:CONTAINS]->(Product), (Order)-[:FULFILLED_BY]->(Shipment), (Customer)-[:OPENED]->(Ticket), (Ticket)-[:REGARDING_ORDER]->(Order), (Order)-[:HAS_RETURN]->(Return).
-    `;
-}
-
-// Private, secure function for creating a ticket (example of a safe write)
-async function _createTicketInDb(session, entities, customerId) {
-    if (!customerId) throw new Error("Authorization failed: No customerId provided.");
-    if (!entities.orderId || !entities.type) throw new Error("Cannot create a ticket without orderId and type.");
-
-    const params = { ...entities, customerId };
-    
-    const result = await session.run(`
-        MATCH (c:Customer {customerID: $customerId})-[:PLACED]->(o:Order {orderId: $orderId})
-        CREATE (t:Ticket {ticketId: randomUUID(), type: $type, description: $description, status: 'Open', createdAt: timestamp()})
-        CREATE (c)-[:OPENED]->(t)
-        CREATE (t)-[:REGARDING_ORDER]->(o)
-        RETURN t.ticketId AS ticketId
-    `, params);
-
-    if (result.records.length === 0) {
-        // Fallback for when order is not found or orderId is 'Unknown'
-        console.warn(`Could not link ticket to order ${entities.orderId}. Creating unlinked ticket.`);
-        const fallbackResult = await session.run(`
-            MATCH (c:Customer {customerID: $customerId})
-            CREATE (t:Ticket {ticketId: randomUUID(), type: $type, description: $description, status: 'Open', createdAt: timestamp()})
-            CREATE (c)-[:OPENED]->(t)
-            RETURN t.ticketId AS ticketId
-        `, params);
-        
-        if (fallbackResult.records.length === 0) {
-             throw new Error(`Authorization failed: Customer ${customerId} not found.`);
-        }
-        return fallbackResult.records[0].get('ticketId');
-    }
-    return result.records[0].get('ticketId');
-}
-
-// Private, secure function for processing a return
-async function _processReturnInDb(session, entities, customerId) {
-    if (!customerId) throw new Error("Authorization failed: No customerId provided.");
-    if (!entities.orderId || !entities.reason) {
-        throw new Error("Cannot process return without orderId and reason.");
-    }
-
-    const params = { ...entities, customerId };
-
-    const result = await session.run(`
-        MATCH (c:Customer {customerID: $customerId})-[:PLACED]->(o:Order {orderId: $orderId})
-        CREATE (r:Return {
-            returnId: randomUUID(),
-            reason: $reason,
-            status: 'Processing',
-            createdAt: timestamp()
-        })
-        CREATE (o)-[:HAS_RETURN]->(r)
-        RETURN r.returnId AS returnId, r.status AS status
-    `, params);
-
-    if (result.records.length === 0) {
-        throw new Error(`Authorization failed or Order not found for customer ${customerId}.`);
-    }
-    return result.records[0].toObject();
-}
-
-const planAndExecuteQuery = async (planObject, context) => {
-    const graphSchema = await getDynamicGraphSchema();
-
-    // --- STAGE 1: PLANNING (The AI "Brain") ---
-    console.log("DATABASE: Planning query based on intent:", planObject.intent);
-
-    // --- UPDATED (Grounded Learning Loop) ---
-    // If the intent is our internal 'CREATE_ESCALATION', we skip the LLM planner
-    if (planObject.intent === "CREATE_ESCALATION") {
-        console.log("DATABASE: Internal call to create escalation ticket...");
-        const execSession = driver.session({ database: 'neo4j' });
-        try {
-            // We use _createTicketInDb for this, which already has the fallback logic
-            const ticketId = await _createTicketInDb(execSession, planObject.entities, context.customerId);
-            return { data: { success: true, ticketId } };
-        } catch (error) {
-            console.error("Error creating escalation ticket:", error);
-            return { error: "Failed to create escalation ticket." };
-        } finally {
-            await execSession.close();
-        }
-    }
-    // --- END UPDATED ---
-
-    // 2. Check if we have all required entities
+// --- 1. LIVE SCHEMA (Unchanged) ---
+async function getLiveGraphSchema() {
     const session = driver.session({ database: 'neo4j' });
-    let requiredEntities = [];
     try {
-        const result = await session.run(
-            `MATCH (i:Intent {name: $intent})-[:REQUIRES_ENTITY]->(e:Entity)
-             RETURN e.name AS entity`,
-            { intent: planObject.intent }
-        );
-        requiredEntities = result.records.map(record => record.get('entity'));
-    } catch (error) {
-        console.error("Error fetching required entities:", error);
-        await session.close(); // Close session on error
-        return { error: "Failed to fetch AI rules from database." };
-    } 
-    // NOTE: Session is NOT closed here on purpose. We re-use it.
+        const labelRes = await session.run(`CALL db.labels() YIELD label RETURN collect(label) as labels`);
+        const labels = labelRes.records[0].get('labels').join(', ');
+        const relRes = await session.run(`CALL db.relationshipTypes() YIELD relationshipType RETURN collect(relationshipType) as rels`);
+        const rels = relRes.records[0].get('rels').join(', ');
+        const schemaRes = await session.run(`
+            CALL db.schema.visualization() YIELD nodes, relationships
+            RETURN 
+                reduce(s = "", n IN nodes | s + labels(n)[0] + ", ") as nodeTypes,
+                reduce(s = "", r IN relationships | s + "(" + labels(startNode(r))[0] + ")-[:" + type(r) + "]->(" + labels(endNode(r))[0] + "), ") as patterns
+        `);
+        const patterns = schemaRes.records[0].get('patterns');
+        return `NODE LABELS: [${labels}]\nRELATIONSHIPS: [${rels}]\nPATTERNS: ${patterns}`;
+    } catch (err) { return `Nodes: Ticket, Order, Product...`; } finally { await session.close(); }
+}
 
-    // 3. Check if we have all required entities
-    const providedEntities = Object.keys(planObject.entities);
-    const missingEntities = requiredEntities.filter(e => !providedEntities.includes(e));
-
-    if (missingEntities.length > 0) {
-        await session.close(); // Close session
-        const needed = missingEntities[0];
-        console.log(`DATABASE: Missing required entity: ${needed}`);
-        return {
-            error: "Missing required entity",
-            needed: needed,
-            reason: `To help with your request, I need to know the ${needed}.`
-        };
-    }
+// --- 2. THE UNIVERSAL CREATOR (Unchanged) ---
+async function createGraphNode(session, label, properties, relationships = []) {
+    const nodeId = generateID(label);
     
-    // 4. Dynamically build the planner prompt
-    const plannerPrompt = `
-        You are an expert Neo4j developer and a logical strategist.
-        Your task is to generate a JSON response to fulfill a user's intent, given you have all necessary information.
+    const finalProps = { 
+        ...properties, 
+        [`${label.toLowerCase()}Id`]: nodeId, 
+        createdAt: new Date().toISOString() 
+    };
+    if (finalProps.aiAnalysis) finalProps.aiAnalysis = JSON.stringify(finalProps.aiAnalysis);
 
-        Schema: ${graphSchema}
-        --- CONTEXT ---
-        User Intent: "${planObject.intent}"
-        Entities Provided: ${JSON.stringify(planObject.entities)}
-        All required entities (${requiredEntities.join(', ')}) are present.
-        ---
-        --- RULES & EXAMPLES ---
-        1.  **For a WRITE action**, respond with an "action" key.
-            - Context: { "intent": "REPORT_DAMAGED_ITEM", ... }
-            - CORRECT Response: {"action": "CREATE_TICKET", "entities": ${JSON.stringify(planObject.entities)}}
+    let query = `CREATE (n:${label} $props) `;
+    
+    relationships.forEach((rel, index) => {
+        const targetVar = `t${index}`;
+        query += `
+            WITH n
+            OPTIONAL MATCH (${targetVar}) 
+            WHERE ${targetVar}.id = '${rel.targetId}' 
+               OR ${targetVar}.ticketId = '${rel.targetId}'
+               OR ${targetVar}.orderId = '${rel.targetId}'
+               OR ${targetVar}.customerID = '${rel.targetId}'
+               OR ${targetVar}.productID = '${rel.targetId}'
+            
+            FOREACH (_ IN CASE WHEN ${targetVar} IS NOT NULL THEN [1] ELSE [] END | 
+                CREATE (${rel.direction === 'IN' ? targetVar : 'n'})-[:${rel.type}]->(${rel.direction === 'IN' ? 'n' : targetVar})
+            )
+        `;
+    });
 
-            - Context: { "intent": "PROCESS_RETURN", ... }
-            - CORRECT Response: {"action": "PROCESS_RETURN", "entities": ${JSON.stringify(planObject.entities)}}
+    query += ` RETURN n`;
+    
+    const result = await session.run(query, { props: finalProps });
+    if (result.records.length === 0) throw new Error(`Failed to create ${label}.`);
+    return { ...result.records[0].get('n').properties, _generatedId: nodeId };
+}
 
-        2.  **For a READ query**, respond with a "query" key.
-            - Context: { "intent": "TRACK_SHIPMENT_DETAILS", ... }
-            - Response: {"query": "MATCH (o:Order {orderId: $orderId})-[:FULFILLED_BY]->(s:Shipment) RETURN s.status, s.shipmentID"}
-
-        3.  **SECURITY: Your generated 'query' MUST be read-only.** It MUST NOT contain the keywords \`DELETE\`, \`DETACH\`, \`REMOVE\`, \`SET\`, \`CREATE\`, or \`MERGE\`. All queries must start with \`MATCH\`.
-
-        4.  **ADDITIONAL EXAMPLES:**
-            - Context: { "intent": "CHECK_PARTIAL_SHIPMENT", ... }
-            - Response: {"query": "MATCH (o:Order {orderId: $orderId})-[:FULFILLED_BY]->(s:Shipment)-[:INCLUDES]->(p:Product) RETURN s.shipmentID, s.status, count(p) AS itemsInShipment"}
-    `;
-
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-    let plannerResult;
-    try {
-        const result = await model.generateContent(plannerPrompt);
-        const rawText = result.response.text();
-        const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) {
-            throw new Error("Planner LLM did not return a valid JSON object.");
+// --- 3. HEALING LOOP (Unchanged) ---
+async function executeCypherWithRetry(session, query, params, model) {
+    const MAX_RETRIES = 2;
+    let currentQuery = query;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            if (/DELETE|SET|CREATE|MERGE|DETACH/i.test(currentQuery)) throw new Error("Read-only violation.");
+            const result = await session.run(currentQuery, params);
+            if (result.records.length === 0) return { error: "No data found." };
+            return { data: result.records.map(r => r.toObject()) };
+        } catch (error) {
+            if (attempt === MAX_RETRIES) return { error: error.message };
+            const res = await model.generateContent(`Fix Cypher: "${currentQuery}". Error: "${error.message}". Return ONLY query.`);
+            currentQuery = res.response.text().replace(/```cypher|```/g, '').replace(/```/g, '').trim();
         }
-        plannerResult = JSON.parse(jsonMatch[0]);
+    }
+}
+
+// --- 4. MAIN EXECUTOR (Fixed Planner Prompt) ---
+const planAndExecuteQuery = async (planObject, context) => {
+    const graphSchema = await getLiveGraphSchema();
+    const session = driver.session({ database: 'neo4j' });
+
+    try {
+        // Bypass for Escalations
+        if (planObject.intent === 'CREATE_ESCALATION') {
+            const checkUser = await session.run(`MATCH (c:Customer {customerID: $cid}) RETURN c`, { cid: context.customerId });
+            if (checkUser.records.length === 0) throw new Error(`Customer not found. Please Re-Login.`);
+
+            const links = [{ targetId: context.customerId, type: 'OPENED', direction: 'IN' }];
+            if (planObject.entities.orderId) links.push({ targetId: planObject.entities.orderId, type: 'REGARDING_ORDER', direction: 'OUT' });
+
+            const node = await createGraphNode(session, 'Ticket', { 
+                type: 'ESCALATION', 
+                description: planObject.entities.description, 
+                aiAnalysis: planObject.entities.aiAnalysis 
+            }, links);
+
+            return { data: { success: true, ticketId: node.ticketId, info: "Escalation created." } };
+        }
+
+        // Validation check (Removed try/catch to let external error propagate)
+        const res = await session.run(`MATCH (i:Intent {name: $intent})-[:REQUIRES_ENTITY]->(e:Entity) RETURN e.name`, { intent: planObject.intent });
+        const required = res.records.map(r => r.get('e.name'));
+        const provided = Object.keys(planObject.entities || {});
+        const missing = required.filter(e => !provided.includes(e));
+        if (missing.length > 0) return { error: "Missing entities", needed: missing[0] };
+
+        // --- SPECIAL-CASE: ORDER STATUS LOOKUPS ---
+        // Make "Where is my order?" style queries customer- and context-aware,
+        // instead of letting the planner return the entire orders dataset.
+        const normalizedIntent = (planObject.intent || '').toUpperCase();
+        if (normalizedIntent === 'CHECK_ORDER_STATUS' || normalizedIntent.includes('ORDER_STATUS')) {
+            const customerId = context.customerId;
+            const orderId = planObject.entities?.orderId || null;
+
+            let query;
+            let params;
+
+            if (orderId) {
+                // If the user (or previous turn) provided a specific orderId,
+                // look up only that order for this customer.
+                query = `
+                    MATCH (c:Customer {customerID: $customerId})-[:PLACED]->(o:Order {orderId: $orderId})
+                    OPTIONAL MATCH (o)-[:FULFILLED_BY]->(s:Shipment)
+                    RETURN o AS order, collect(s) AS shipments
+                `;
+                params = { customerId, orderId };
+            } else {
+                // No explicit orderId: assume the user is asking about their most
+                // recent order only (not the whole history).
+                query = `
+                    MATCH (c:Customer {customerID: $customerId})-[:PLACED]->(o:Order)
+                    OPTIONAL MATCH (o)-[:FULFILLED_BY]->(s:Shipment)
+                    WITH o, collect(s) AS shipments
+                    ORDER BY o.datePlaced DESC
+                    LIMIT 1
+                    RETURN o AS order, shipments
+                `;
+                params = { customerId };
+            }
+
+            const result = await session.run(query, params);
+            if (result.records.length === 0) {
+                return { error: 'No matching order found for this customer.' };
+            }
+
+            return { data: result.records.map(r => r.toObject()) };
+        }
+        
+        // --- AI PLANNING ---
+        const plannerPrompt = `
+            ROLE: Neo4j Architect.
+            OUTPUT CONSTRAINT: **Return ONLY ONE JSON object, DO NOT wrap it in a 'plan' or list.**
+            
+            SCHEMA: ${graphSchema}
+            INTENT: "${planObject.intent}"
+            DATA: ${JSON.stringify(planObject.entities)}
+            CONTEXT_USER: "${context.customerId}" (Use this to link, property is customerID)
+
+            TASK: Generate the JSON Action Object for this single step.
+
+            GLOBAL RULES:
+            - You MUST always scope reads and writes to the current customer using CONTEXT_USER.
+              Never return orders, tickets, or data for other customers.
+            - Prefer narrow, specific queries. Avoid scanning the entire graph when the intent
+              is about a single customer's data.
+            - If an intent is about a specific resource (order, ticket, etc.) and an ID entity
+              is present, filter by that ID. If there is no ID, return only a small, recent subset
+              (e.g., the most recent few records) instead of the whole history.
+            
+            1. **READ (Query):**
+               If fetching data, return for example:
+               { "query": "MATCH (c:Customer {customerID: '${context.customerId}'})-[:PLACED]->(o:Order)-[:FULFILLED_BY]->(s:Shipment) RETURN o, s ORDER BY o.datePlaced DESC LIMIT 3" }
+            
+            2. **WRITE (Create):**
+               If creating data (Ticket/Return), return { "action": "CREATE_NODE", "label": "Ticket", "data": {...}, "links": [...] }
+        `;
+
+        const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+        let result;
+        try {
+            const raw = await model.generateContent(plannerPrompt);
+            const rawText = raw.response.text();
+            
+            // Clean and parse the main JSON block
+            const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+            if (!jsonMatch) throw new Error("Planner failed to return JSON.");
+            result = JSON.parse(jsonMatch[0]);
+
+        } catch (e) { 
+            await session.close(); 
+            return { error: `Planning failed: Planner did not return valid JSON. Error: ${e.message}` }; 
+        }
+
+        // --- EXECUTION ---
+        if (result.query) {
+            return await executeCypherWithRetry(session, result.query, planObject.entities, model);
+        } 
+        else if (result.action === 'CREATE_NODE' || result.action === 'CREATE_TICKET') {
+            // ... (keep normalization logic for CREATE_TICKET/CREATE_NODE) ...
+            
+            // Normalization for legacy 'CREATE_TICKET'
+            if (result.action === 'CREATE_TICKET') {
+                result.label = 'Ticket';
+                result.links = [{ targetId: context.customerId, type: 'OPENED', direction: 'IN' }];
+                if (!result.data) result.data = { type: planObject.intent, description: "Ticket" };
+            }
+
+            const createdNode = await createGraphNode(session, result.label, result.data, result.links);
+            const idKey = Object.keys(createdNode).find(k => k.includes('Id') || k.includes('ID'));
+            return { data: { success: true, ticketId: createdNode[idKey] || createdNode._generatedId } };
+        }
+
+        return { error: `Unsupported Action: ${result.action || 'Unknown'}` };
+
     } catch (err) {
-        console.error("Error calling Planner LLM:", err);
-        await session.close(); // Close session on error
-        return { error: "AI Planner failed to generate a valid plan." };
-    }
-    
-    console.log("DATABASE: Planner Result:", plannerResult);
-
-    if (plannerResult.error) {
-        await session.close(); // Close session
-        return plannerResult;
-    }
-
-    // --- STAGE 2: EXECUTION (The Secure "Hands") ---
-    // We re-use the session from above
-    try {
-        if (plannerResult.query) {
-            
-            const queryUpper = plannerResult.query.toUpperCase();
-            if (queryUpper.includes('DELETE') || queryUpper.includes('SET') || queryUpper.includes('CREATE') || queryUpper.includes('MERGE') || queryUpper.includes('REMOVE') || queryUpper.includes('DETACH')) {
-                console.error("SECURITY VIOLATION: AI attempted a write query:", plannerResult.query);
-                return { error: "The planned query was rejected for security reasons." };
-            }
-
-            const dbResult = await session.run(plannerResult.query, planObject.entities);
-            if (dbResult.records.length === 0) return { error: `No results found.` };
-            return { data: dbResult.records.map(record => record.toObject()) };
-
-        } else if (plannerResult.action) {
-            
-            switch (plannerResult.action) {
-                case 'CREATE_TICKET':
-                    // --- START FIX ---
-                    // The AI planner is forgetting to add the 'type' to the entities.
-                    // We know the original intent, so we can add it manually
-                    // to prevent the _createTicketInDb function from crashing.
-                    if (!plannerResult.entities.type) {
-                        // e.g., "REPORT_DAMAGED_ITEM" becomes "DAMAGED_ITEM"
-                        const ticketType = planObject.intent.replace('REPORT_', '');
-                        plannerResult.entities.type = ticketType;
-                        console.log(`DATABASE: Auto-inferred ticket type: ${ticketType}`);
-                    }
-                    // --- END FIX ---
-                
-                    const ticketId = await _createTicketInDb(session, plannerResult.entities, context.customerId);
-                    return { data: { success: true, ticketId } };
-                
-                case 'PROCESS_RETURN':
-                    const returnData = await _processReturnInDb(session, plannerResult.entities, context.customerId);
-                    return { data: { success: true, ...returnData } };
-                
-                default:
-                    return { error: "The planned action is not supported." };
-            }
-        }
+        return { error: err.message };
     } finally {
-        await session.close(); // Finally, close the session
+        await session.close();
     }
 };
 
-module.exports = { planAndExecuteQuery };
+module.exports = { planAndExecuteQuery, createGraphNode };

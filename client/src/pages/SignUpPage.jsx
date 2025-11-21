@@ -1,60 +1,47 @@
+// client/src/pages/SignupPage.jsx
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
 import { useNavigate, Link } from 'react-router-dom';
+import axios from 'axios';
 import setAuthToken from '../services/setAuthToken';
-import '../styles/LoginPage.css';
+import '../styles/LoginPage.css'; // Reuse the Login styles for consistency
 
-function LoginPage() {
-    // Start with empty fields
+function SignupPage() {
+    const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
     const navigate = useNavigate();
 
-    // If user is already logged in, redirect them away from this page
+    // Redirect if already logged in
     useEffect(() => {
-        const token = localStorage.getItem('token');
-        const role = localStorage.getItem('role');
-        
-        if (token && role) {
-            if (role === 'AGENT') {
-                navigate('/dashboard', { replace: true });
-            } else {
-                navigate('/', { replace: true });
-            }
+        if (localStorage.getItem('token')) {
+            navigate('/', { replace: true });
         }
     }, [navigate]);
 
-    const handleLogin = async (e) => {
+    const handleSignup = async (e) => {
         e.preventDefault();
         setError('');
         setLoading(true);
+
         try {
-            const res = await axios.post('/api/auth/login', { email, password });
+            // Call the new Signup endpoint
+            const res = await axios.post('/api/auth/signup', { name, email, password });
             const { token, customerId, role } = res.data;
 
-            // 1. Save all data to localStorage
+            // Save data (Auto-Login)
             localStorage.setItem('token', token);
             localStorage.setItem('role', role);
             localStorage.setItem('customerId', customerId);
-
-            // 2. Set the token in axios headers
             setAuthToken(token);
 
-            // 3. Redirect to the correct place based on role
-            if (role === 'AGENT') {
-                navigate('/dashboard', { replace: true });
-            } else {
-                navigate('/', { replace: true });
-            }
-            
+            // Redirect to Home
+            navigate('/home', { replace: true });
+
         } catch (err) {
-            setError('Login failed. Please check your credentials.');
-            localStorage.removeItem('token');
-            localStorage.removeItem('role');
-            localStorage.removeItem('customerId');
-            setAuthToken(null);
+            console.error(err);
+            setError(err.response?.data?.message || 'Signup failed. Please try again.');
         } finally {
             setLoading(false);
         }
@@ -62,9 +49,22 @@ function LoginPage() {
 
     return (
         <div className="login-container">
-            <form className="login-form" onSubmit={handleLogin}>
+            <form className="login-form" onSubmit={handleSignup}>
                 <h1 style={{ color: 'var(--primary-color)' }}>ecomagent</h1>
-                <h2>Welcome</h2>
+                <h2>Create Account</h2>
+                
+                <div className="input-group">
+                    <label htmlFor="name">Full Name</label>
+                    <input 
+                        type="text" 
+                        id="name"
+                        value={name} 
+                        onChange={(e) => setName(e.target.value)} 
+                        placeholder="John Doe" 
+                        required 
+                    />
+                </div>
+
                 <div className="input-group">
                     <label htmlFor="email">Email</label>
                     <input 
@@ -76,6 +76,7 @@ function LoginPage() {
                         required 
                     />
                 </div>
+
                 <div className="input-group">
                     <label htmlFor="password">Password</label>
                     <input 
@@ -83,20 +84,23 @@ function LoginPage() {
                         id="password"
                         value={password} 
                         onChange={(e) => setPassword(e.target.value)} 
-                        placeholder="Enter your password" 
+                        placeholder="Choose a password" 
                         required 
                     />
                 </div>
+
                 <button type="submit" className="login-button" disabled={loading}>
-                    {loading ? 'Logging in...' : 'Login'}
+                    {loading ? 'Creating Account...' : 'Sign Up'}
                 </button>
+
                 {error && <p className="login-error">{error}</p>}
+
                 <div className="customer-link">
-                    New customer? <Link to="/signup">Create an account</Link>
+                    Already have an account? <Link to="/login">Login here</Link>
                 </div>
             </form>
         </div>
     );
 }
 
-export default LoginPage;
+export default SignupPage;
